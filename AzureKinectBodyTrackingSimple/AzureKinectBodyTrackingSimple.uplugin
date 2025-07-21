@@ -1,0 +1,22 @@
+{
+    "FileVersion": 3,
+    "Version": 1,
+    "VersionName": "1.0",
+    "FriendlyName": "Azure Kinect Body Tracking Simple",
+    "Description": "Minimal plugin to expose Azure Kinect body tracking data",
+    "Category": "Hardware",
+    "CreatedBy": "ToucheToucan",
+    "CreatedByURL": "",
+    "DocsURL": "",
+    "MarketplaceURL": "",
+    "SupportURL": "",
+    "EnabledByDefault": true,
+    "SupportedTargetPlatforms": [ "Win64" ],
+    "Modules": [
+        {
+            "Name": "AzureKinectBodyTrackingSimple",
+            "Type": "Runtime",
+            "LoadingPhase": "PreDefault"
+        }
+    ]
+}

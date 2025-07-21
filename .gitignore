@@ -1,0 +1,16 @@
+# Binaries and intermediate files
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+
+# Build system files
+*.VC.db
+*.suo
+*.user
+*.opensdf
+*.sdf
+
+# IDE directories
+.vs/
+.idea/

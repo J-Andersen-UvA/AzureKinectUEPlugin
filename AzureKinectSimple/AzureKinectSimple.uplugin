@@ -1,0 +1,22 @@
+{
+    "FileVersion": 3,
+    "Version": 1,
+    "VersionName": "1.0",
+    "FriendlyName": "Azure Kinect Simple",
+    "Description": "Minimal plugin to expose Azure Kinect color+depth",
+    "Category": "Hardware",
+    "CreatedBy": "You",
+    "CreatedByURL": "",
+    "DocsURL": "",
+    "MarketplaceURL": "",
+    "SupportURL": "",
+    "EnabledByDefault": true,
+    "SupportedTargetPlatforms": [ "Win64" ],
+    "Modules": [
+        {
+            "Name": "AzureKinectSimple",
+            "Type": "Runtime",
+            "LoadingPhase": "PreDefault"
+        }
+    ]
+}

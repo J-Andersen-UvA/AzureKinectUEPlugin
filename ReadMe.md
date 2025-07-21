@@ -26,6 +26,8 @@ Currently the created C++ Plugin contains ways to read out the `colorTexture`, `
 These nodes are childed to the `AzureKinect Component`, an actor needs this component to access this data. Or it needs to get it from another actor.
 
 ### Azure Kinect Body Tracking Simple
+The following nodes are childed to the `AzureKinectBodyTracking Component`, an actor needs this component to access this data. Or it needs to get it from another actor.
+
 Created nodes:
 |Node |Functionality |
 |---|---|

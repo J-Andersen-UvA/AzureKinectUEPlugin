@@ -1,14 +1,14 @@
 # Azure Kinect UE Plugin
 I've made a simple plugin to use the Azure Kinect SDK within Unreal Engine. It is compromised of two parts:
-1. AzureKinectSimple
+1. **AzureKinectSimple**
 Exposes optical camera and depth camera. Able to return colored texture and depth texture. Build on the Azure Kinect SDK.
-2. AzureKinectBodyTrackingSimple
+2. **AzureKinectBodyTrackingSimple**
 Exposes tracking data such as skeleton of a body, closest person, number of people in view. Build on the Azure Kinect Body Tracking SDK.
 ---
 
 ## Requirements
 1. The Azure Kinect SDK and Azure Kinect Body Tracking SDK.
-We used v1.4.2 for Azure Kinect SDK and v1.1.0 for the Azure Kinect Body Tracking SDK.
+We used `v1.4.2` for Azure Kinect SDK and `v1.1.0` for the Azure Kinect Body Tracking SDK.
 2. Environment variables:
 `AZUREKINECT_SDK` pointing to the root folder of the SDK
 `AZUREKINECT_BODY_SDK` pointing to the root folder of the SDK

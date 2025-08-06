@@ -115,6 +115,7 @@ void UAzureKinectBodyTrackingComponent::TickComponent(float DeltaTime, ELevelTic
         TrackedBodyCount = 0;
     }
 
+    findClosestTrackedBody();
     k4a_capture_release(sensorCapture);
 }
 
@@ -169,22 +170,45 @@ void UAzureKinectBodyTrackingComponent::stopTracking()
     // k4a_device_close(Device);
 }
 
-void UAzureKinectBodyTrackingComponent::getBodySkeleton(TArray<FBodyJointData>& OutJoints) const
+bool UAzureKinectBodyTrackingComponent::getBodySkeleton(TArray<FBodyJointData>& OutJoints) const
 {
     OutJoints.Reset();
 
-    // no frame? bail out
-    if (!FrameData) return;
+    if (!FrameData)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("BodyBT: no FrameData"));
+        return false;
+    }
 
     // how many bodies?
     uint32 NumBodies = k4abt_frame_get_num_bodies(FrameData);
-    if (NumBodies == 0) return;
+    UE_LOG(LogTemp, Log, TEXT("BodyBT: NumBodies=%u TrackedBodyId=%d"), NumBodies, TrackedBodyId);
+    if (NumBodies == 0) return false;
 
-    // grab skeleton for the first body
+    // grab skeleton for the closest body
     k4abt_skeleton_t Skeleton;
-    if (k4abt_frame_get_body_skeleton(FrameData, 0, &Skeleton) != K4A_RESULT_SUCCEEDED)
+    bool bFound = false;
+
+    for (uint32 i = 0; i < NumBodies; ++i)
     {
-        return;
+        if (TrackedBodyId != static_cast<int32>(k4abt_frame_get_body_id(FrameData, i)))
+        {
+            continue;
+        }
+
+        if (k4abt_frame_get_body_skeleton(FrameData, i, &Skeleton) == K4A_RESULT_SUCCEEDED)
+        {
+            bFound = true;
+
+        }
+
+        break;
+    }
+
+    if (!bFound)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("BodyBT: requested BodyId %d not in frame"), TrackedBodyId);
+        return false;
     }
 
     // reserve space
@@ -197,30 +221,141 @@ void UAzureKinectBodyTrackingComponent::getBodySkeleton(TArray<FBodyJointData>& 
 
         FBodyJointData Data;
         Data.JointId = JointIndex;
-        // convert millimeters → meters, reorder if you like
-        Data.Position = FVector(Src.position.xyz.x,
-            Src.position.xyz.y,
-            Src.position.xyz.z) * 0.001f;
-        Data.Orientation = FQuat(Src.orientation.wxyz.x,
+
+        // Get Joint name
+        EAzureKinectJoint JointEnum = static_cast<EAzureKinectJoint>(Data.JointId);
+        const UEnum* UEEnum = StaticEnum<EAzureKinectJoint>();
+        Data.JointName = UEEnum->GetDisplayNameTextByValue((int64)JointEnum).ToString();
+
+        // 1) convert millimeters → unreal cm, reorder if you like
+        FVector LocalCm = FVector(
+            Src.position.xyz.x * 0.1f,
+            Src.position.xyz.y * 0.1f,
+            Src.position.xyz.z * 0.1f);
+
+        // 2) remap into Unreal local axes:
+        //    Unreal.X = Kinect.Z
+        //    Unreal.Y = Kinect.X
+        //    Unreal.Z = –Kinect.Y
+        FVector LocalUnrealCm = FVector(
+            LocalCm.Z,         // forward
+            LocalCm.X,         // right
+            LocalCm.Y          // up
+        );
+
+        FVector WorldCm = AzureCameraTransform.TransformPosition(LocalUnrealCm);
+        Data.Position = WorldCm;
+
+        FQuat Qkinect(
+            Src.orientation.wxyz.x,
             Src.orientation.wxyz.y,
             Src.orientation.wxyz.z,
-            Src.orientation.wxyz.w);
+            Src.orientation.wxyz.w
+        );
+        static const FMatrix RemapMatrix = FMatrix(
+            FPlane(0, 0, 1, 0),
+            FPlane(1, 0, 0, 0),
+            FPlane(0, -1, 0, 0),
+            FPlane(0, 0, 0, 1)
+        );
+        const FQuat RemapQuat(RemapMatrix);
+        const FQuat RemapQuatInv = RemapQuat.Inverse();
+        FQuat Qlocal = RemapQuat * Qkinect * RemapQuatInv;
+        FQuat Qworld = AzureCameraTransform.GetRotation() * Qlocal;
+        Data.Orientation = Qworld;
 
         OutJoints.Add(Data);
     }
+
+    return true;
 }
 
-void UAzureKinectBodyTrackingComponent::getBoneData()
+bool UAzureKinectBodyTrackingComponent::getBoneDataByName(const FString& BoneName, const TArray<FBodyJointData>& Joints, FBodyJointData& OutJointData) const
 {
-    // Implementation for retrieving bone data
-    UE_LOG(LogTemp, Log, TEXT("Retrieving bone data..."));
+    for (const FBodyJointData& Joint : Joints)
+    {
+        if (Joint.JointName.Equals(BoneName, ESearchCase::IgnoreCase))
+        {
+            OutJointData = Joint;
+            return true;
+        }
+    }
+    UE_LOG(LogTemp, Warning, TEXT("BodyBT: bone '%s' not found in provided skeleton"), *BoneName);
+    return false;
+}
 
-    // Here you would typically retrieve the bone data from the body tracking frame.
-    // For example:
-    // k4abt_frame_get_body_skeleton(BodyFrame, 0, &skeleton);
+bool UAzureKinectBodyTrackingComponent::getBoneDataByEnum(EAzureKinectJoint JointEnum, const TArray<FBodyJointData>& Joints, FBodyJointData& OutJointData) const
+{
+    int32 WantedId = static_cast<int32>(JointEnum);
+    for (const FBodyJointData& Joint : Joints)
+    {
+        if (Joint.JointId == WantedId)
+        {
+            OutJointData = Joint;
+            return true;
+        }
+    }
+    UE_LOG(LogTemp, Warning, TEXT("BodyBT: joint enum '%d' not found in provided skeleton"), WantedId);
+    return false;
 }
 
 void UAzureKinectBodyTrackingComponent::findClosestTrackedBody()
 {
-    UE_LOG(LogTemp, Log, TEXT("Finding closest tracked body..."));
+    TrackedBodyId = -1;  // reset
+
+    if (!FrameData)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("BodyBT: no frame to search"));
+        return;
+    }
+
+    const uint32 NumBodies = k4abt_frame_get_num_bodies(FrameData);
+    if (NumBodies == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("BodyBT: no bodies in frame"));
+        return;
+    }
+
+    float BestDistSq = FLT_MAX;
+
+    for (uint32 i = 0; i < NumBodies; ++i)
+    {
+        uint32 bodyID = k4abt_frame_get_body_id(FrameData, i);
+        if (bodyID == K4ABT_INVALID_BODY_ID)
+        {
+            break;
+        }
+
+        k4abt_skeleton_t Skeleton;
+        if (k4abt_frame_get_body_skeleton(FrameData, i, &Skeleton) != K4A_RESULT_SUCCEEDED)
+        {
+            continue;
+        }
+
+        // Read the pelvis joint as our “root” point
+        const auto& Pelvis = Skeleton.joints[K4ABT_JOINT_PELVIS].position.xyz;
+        FVector PosMeters(
+            Pelvis.x * 0.001f,
+            Pelvis.y * 0.001f,
+            Pelvis.z * 0.001f
+        );
+
+        // Compute squared distance to origin (sensor at 0,0,0)
+        const float DistSq = PosMeters.SizeSquared();
+
+        if (DistSq < BestDistSq)
+        {
+            BestDistSq = DistSq;
+            TrackedBodyId = static_cast<int32>(bodyID);
+        }
+    }
+}
+
+void UAzureKinectBodyTrackingComponent::setAzureCameraTransform(const FTransform& NewTransform)
+{
+    AzureCameraTransform = NewTransform;
+    UE_LOG(LogTemp, Log, TEXT("AzureKinect: transform set to Location=%s Rotation=%s"),
+        *AzureCameraTransform.GetLocation().ToString(),
+        *AzureCameraTransform.GetRotation().Rotator().ToString()
+    );
 }

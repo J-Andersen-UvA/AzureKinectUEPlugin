@@ -1,6 +1,6 @@
-﻿#include <k4abt.h>      // for k4abt_tracker_create and k4abt_result_t
+﻿#include "AzureKinectBodyTrackingComponent.h"
+#include <k4abt.h>      // for k4abt_tracker_create and k4abt_result_t
 #include <k4a/k4a.h>   // for k4a_device_get_calibration, etc.
-#include "AzureKinectBodyTrackingComponent.h"
 
 UAzureKinectBodyTrackingComponent::UAzureKinectBodyTrackingComponent()
 {

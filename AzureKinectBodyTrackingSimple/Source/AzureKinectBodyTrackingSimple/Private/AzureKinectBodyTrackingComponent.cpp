@@ -4,6 +4,7 @@
 #include "AzureKinectLookSolver.h"
 #include "AzureActiveSelector.h"
 #include "AzureKinectSkeletonUtils.h"
+#include "AzureBodyFrameUtils.h"
 
 UAzureKinectBodyTrackingComponent::UAzureKinectBodyTrackingComponent()
 {
@@ -290,54 +291,7 @@ bool UAzureKinectBodyTrackingComponent::getBoneDataByEnum(EAzureKinectJoint Join
 
 void UAzureKinectBodyTrackingComponent::findClosestTrackedBody()
 {
-    TrackedBodyId = -1;  // reset
-
-    if (!FrameData)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("BodyBT: no frame to search"));
-        return;
-    }
-
-    const uint32 NumBodies = k4abt_frame_get_num_bodies(FrameData);
-    if (NumBodies == 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("BodyBT: no bodies in frame"));
-        return;
-    }
-
-    float BestDistSq = FLT_MAX;
-
-    for (uint32 i = 0; i < NumBodies; ++i)
-    {
-        uint32 bodyID = k4abt_frame_get_body_id(FrameData, i);
-        if (bodyID == K4ABT_INVALID_BODY_ID)
-        {
-            break;
-        }
-
-        k4abt_skeleton_t Skeleton;
-        if (k4abt_frame_get_body_skeleton(FrameData, i, &Skeleton) != K4A_RESULT_SUCCEEDED)
-        {
-            continue;
-        }
-
-        // Read the pelvis joint as our “root” point
-        const auto& Pelvis = Skeleton.joints[K4ABT_JOINT_PELVIS].position.xyz;
-        FVector PosMeters(
-            Pelvis.x * 0.001f,
-            Pelvis.y * 0.001f,
-            Pelvis.z * 0.001f
-        );
-
-        // Compute squared distance to origin (sensor at 0,0,0)
-        const float DistSq = PosMeters.SizeSquared();
-
-        if (DistSq < BestDistSq)
-        {
-            BestDistSq = DistSq;
-            TrackedBodyId = static_cast<int32>(bodyID);
-        }
-    }
+    TrackedBodyId = AzureFrame::FindClosestBodyId(FrameData);
 }
 
 static FORCEINLINE FVector AzureToUE_SensorLocal_cm(const FVector& p_m)

@@ -4,6 +4,9 @@
 #include "Components/ActorComponent.h"
 #include <k4a/k4a.h>
 #include <k4abt.h>
+
+#include "AzureActiveSelector.h"
+
 #include "Runtime/Engine/Public/EngineGlobals.h"
 #include "AzureKinectBodyTrackingComponent.generated.h"
 
@@ -82,6 +85,8 @@ struct FBodyRaiseState
     float LastRaiseTime = 0.f; // last time either hand crossed above
 };
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FAzureActiveBodyChanged, int32, OldBodyId, int32, NewBodyId);
+
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class AZUREKINECTBODYTRACKINGSIMPLE_API UAzureKinectBodyTrackingComponent : public UActorComponent
 {
@@ -125,9 +130,6 @@ public:
     UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category="Azure Kinect BT")
     int32 TrackedBodyId = -1;
 
-    UFUNCTION(BlueprintCallable, Category="Cry")
-    void cry();
-
 	// Flag to check if tracking is active
 	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "Azure Kinect BT")
 	bool bIsTracking = false;
@@ -160,8 +162,12 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Azure Kinect BT|Gesture")
     float RaiseHoldSeconds = 0.15f;
 
+    /** After an active is not seen for this long, clear to -1. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Azure Kinect BT|Gesture")
     float ActiveStickySeconds = 2.0f;
+
+    UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "Azure Kinect BT|Active")
+    bool bHasActive = false;
 
     UFUNCTION(BlueprintCallable, Category = "Azure Kinect BT|Active Selection")
     void SetSelectionMode(EActiveSelectionMode NewMode) { SelectionMode = NewMode; }
@@ -172,6 +178,12 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Azure Kinect BT|Active Selection")
     bool GetActiveBodySkeleton(TArray<FBodyJointData>& OutJoints) const;
 
+    UFUNCTION(BlueprintCallable, Category = "Azure Kinect BT|Active")
+    bool HasActive() const { return bHasActive; }
+
+    UPROPERTY(BlueprintAssignable, Category = "Azure Kinect BT|Active")
+    FAzureActiveBodyChanged OnActiveBodyChanged;
+
 private:
     // Device handles for the Azure Kinect
     k4a_device_t Device = nullptr;
@@ -180,6 +192,8 @@ private:
     k4abt_frame_t FrameData = nullptr;
     k4abt_skeleton_t* BodySkeleton = nullptr;
 
+    FAzureActiveSelector ActiveSelector;
+
     void findClosestTrackedBody();
 
     /** Per-body gesture state */
@@ -187,5 +201,5 @@ private:
 
     void UpdateActiveBodyFromFrame();         // called each Tick after we set FrameData
     bool GetSkeletonByBodyId(int32 BodyId, k4abt_skeleton_t& OutSkel) const;
-
+    void SetActiveBody(int32 NewId);
 };

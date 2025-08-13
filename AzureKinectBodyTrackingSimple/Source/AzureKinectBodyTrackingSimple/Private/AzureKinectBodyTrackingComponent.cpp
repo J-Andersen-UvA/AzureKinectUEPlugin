@@ -86,7 +86,7 @@ void UAzureKinectBodyTrackingComponent::TickComponent(float DeltaTime, ELevelTic
 
     if (!bIsTracking || !Tracker || !Device)
     {
-        UE_LOG(LogTemp, Error, TEXT("Not tracking or no tracker or no device!"));
+        UE_LOG(LogTemp, Warning, TEXT("Not tracking or no tracker or no device!"));
         return;
     }
 
@@ -294,13 +294,6 @@ void UAzureKinectBodyTrackingComponent::findClosestTrackedBody()
     TrackedBodyId = AzureFrame::FindClosestBodyId(FrameData);
 }
 
-static FORCEINLINE FVector AzureToUE_SensorLocal_cm(const FVector& p_m)
-{
-    return FVector(-p_m.X * 100.f,
-        -p_m.Y * 100.f,
-        p_m.Z * 100.f);
-}
-
 FVector UAzureKinectBodyTrackingComponent::ComputeLookTargetFromKinectHead(
     const FVector& HeadPosMeters_Kinect,
     const FTransform& KinectToWorld,
@@ -310,13 +303,6 @@ FVector UAzureKinectBodyTrackingComponent::ComputeLookTargetFromKinectHead(
 {
     return AzureLook::ComputeLookTargetFromKinectHead(
         HeadPosMeters_Kinect, KinectToWorld, CameraWorld, AvatarHeadWorld, AimDistance);
-}
-
-int32 UAzureKinectBodyTrackingComponent::AmountOfSkeletonsTracked() const
-{
-    if (FrameData)
-        return k4abt_frame_get_num_bodies(FrameData);
-    return -1;
 }
 
 bool UAzureKinectBodyTrackingComponent::GetSkeletonByBodyId(int32 BodyId, k4abt_skeleton_t& OutSkel) const

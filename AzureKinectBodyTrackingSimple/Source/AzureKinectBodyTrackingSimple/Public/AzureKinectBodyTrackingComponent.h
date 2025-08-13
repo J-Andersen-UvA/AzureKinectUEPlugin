@@ -75,16 +75,6 @@ enum class EActiveSelectionMode : uint8
     WaveLastRaised  UMETA(DisplayName = "Last Hand-Above-Head")
 };
 
-USTRUCT()
-struct FBodyRaiseState
-{
-    GENERATED_BODY()
-    bool  bLeftAbove = false;
-    bool  bRightAbove = false;
-    float LastSeenTime = 0.f;
-    float LastRaiseTime = 0.f; // last time either hand crossed above
-};
-
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FAzureActiveBodyChanged, int32, OldBodyId, int32, NewBodyId);
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
@@ -146,9 +136,6 @@ public:
         const FVector& AvatarHeadWorld,
         float AimDistance = 1000.f) const;
 
-    UFUNCTION(BlueprintCallable, Category = "Azure Kinect BT")
-    int32 AmountOfSkeletonsTracked() const;
-
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Azure Kinect BT|Active Selection")
     EActiveSelectionMode SelectionMode = EActiveSelectionMode::Closest;
 
@@ -195,9 +182,6 @@ private:
     FAzureActiveSelector ActiveSelector;
 
     void findClosestTrackedBody();
-
-    /** Per-body gesture state */
-    TMap<int32, FBodyRaiseState> BodyStates;
 
     void UpdateActiveBodyFromFrame();         // called each Tick after we set FrameData
     bool GetSkeletonByBodyId(int32 BodyId, k4abt_skeleton_t& OutSkel) const;

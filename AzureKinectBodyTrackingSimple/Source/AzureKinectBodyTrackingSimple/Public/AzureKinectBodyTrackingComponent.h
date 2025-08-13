@@ -65,6 +65,23 @@ enum class EAzureKinectJoint : uint8
     EarRight        UMETA(DisplayName="Ear Right")
 };
 
+UENUM(BlueprintType)
+enum class EActiveSelectionMode : uint8
+{
+    Closest         UMETA(DisplayName = "Closest To Sensor"),
+    WaveLastRaised  UMETA(DisplayName = "Last Hand-Above-Head")
+};
+
+USTRUCT()
+struct FBodyRaiseState
+{
+    GENERATED_BODY()
+    bool  bLeftAbove = false;
+    bool  bRightAbove = false;
+    float LastSeenTime = 0.f;
+    float LastRaiseTime = 0.f; // last time either hand crossed above
+};
+
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class AZUREKINECTBODYTRACKINGSIMPLE_API UAzureKinectBodyTrackingComponent : public UActorComponent
 {
@@ -95,8 +112,8 @@ public:
     UPROPERTY(BlueprintReadOnly, Category="Azure Kinect BT")
     FTransform AzureCameraTransform = FTransform::Identity;
 
-    UFUNCTION(BlueprintCallable, Category="Azure Kinect BT")
-    void setAzureCameraTransform(const FTransform& NewTransform);
+    //UFUNCTION(BlueprintCallable, Category="Azure Kinect BT")
+    //void setAzureCameraTransform(const FTransform& NewTransform);
 
     UFUNCTION(BlueprintCallable, Category="Azure Kinect BT")
 	int32 getTrackedBodyCount()
@@ -119,6 +136,42 @@ public:
     UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category="Azure Kinect BT")
     int32 TrackedBodyCount = 0;
 
+    UFUNCTION(BlueprintCallable, Category = "Azure Kinect BT")
+    FVector ComputeLookTargetFromKinectHead(
+        const FVector& HeadPosMeters_Kinect,
+        const FTransform& KinectToWorld,
+        const FTransform& CameraWorld,
+        const FVector& AvatarHeadWorld,
+        float AimDistance = 1000.f) const;
+
+    UFUNCTION(BlueprintCallable, Category = "Azure Kinect BT")
+    int32 AmountOfSkeletonsTracked() const;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Azure Kinect BT|Active Selection")
+    EActiveSelectionMode SelectionMode = EActiveSelectionMode::Closest;
+
+    /** The currently "active" body id (may differ from TrackedBodyId in Wave mode). */
+    UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "Azure Kinect BT|Active Selection")
+    int32 ActiveBodyId = -1;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Azure Kinect BT|Gesture")
+    int32 AboveHeadMarginMM = 120; // ~12 cm
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Azure Kinect BT|Gesture")
+    float RaiseHoldSeconds = 0.15f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Azure Kinect BT|Gesture")
+    float ActiveStickySeconds = 2.0f;
+
+    UFUNCTION(BlueprintCallable, Category = "Azure Kinect BT|Active Selection")
+    void SetSelectionMode(EActiveSelectionMode NewMode) { SelectionMode = NewMode; }
+
+    UFUNCTION(BlueprintCallable, Category = "Azure Kinect BT|Active Selection")
+    int32 GetActiveBodyId() const { return ActiveBodyId; }
+
+    UFUNCTION(BlueprintCallable, Category = "Azure Kinect BT|Active Selection")
+    bool GetActiveBodySkeleton(TArray<FBodyJointData>& OutJoints) const;
+
 private:
     // Device handles for the Azure Kinect
     k4a_device_t Device = nullptr;
@@ -128,4 +181,11 @@ private:
     k4abt_skeleton_t* BodySkeleton = nullptr;
 
     void findClosestTrackedBody();
+
+    /** Per-body gesture state */
+    TMap<int32, FBodyRaiseState> BodyStates;
+
+    void UpdateActiveBodyFromFrame();         // called each Tick after we set FrameData
+    bool GetSkeletonByBodyId(int32 BodyId, k4abt_skeleton_t& OutSkel) const;
+
 };

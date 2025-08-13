@@ -115,8 +115,115 @@ void UAzureKinectBodyTrackingComponent::TickComponent(float DeltaTime, ELevelTic
         TrackedBodyCount = 0;
     }
 
+    // Update selection based on chosen mode
+    UpdateActiveBodyFromFrame();
+
+    // Keep your old closest logic for backward compat / debug
     findClosestTrackedBody();
+
+    // Release sensor capture
     k4a_capture_release(sensorCapture);
+}
+
+void UAzureKinectBodyTrackingComponent::UpdateActiveBodyFromFrame()
+{
+    const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+
+    if (!FrameData)
+    {
+        ActiveBodyId = -1;
+        return;
+    }
+
+    // If we’re in Closest mode, mirror the old behavior for ActiveBodyId too
+    if (SelectionMode == EActiveSelectionMode::Closest)
+    {
+        ActiveBodyId = TrackedBodyId;
+        return;
+    }
+
+    // WaveLastRaised mode
+    const uint32 NumBodies = k4abt_frame_get_num_bodies(FrameData);
+    bool bAnySeen = false;
+
+    for (uint32 i = 0; i < NumBodies; ++i)
+    {
+        const uint32 BodyIdU = k4abt_frame_get_body_id(FrameData, i);
+        if (BodyIdU == K4ABT_INVALID_BODY_ID) continue;
+        const int32 BodyId = static_cast<int32>(BodyIdU);
+        bAnySeen = true;
+
+        k4abt_skeleton_t Skel;
+        if (k4abt_frame_get_body_skeleton(FrameData, i, &Skel) != K4A_RESULT_SUCCEEDED)
+        {
+            continue;
+        }
+
+        // Azure camera frame (mm): +Y is down. "Above head" => handY < headY by a margin.
+        const float HeadY = Skel.joints[K4ABT_JOINT_HEAD].position.xyz.y;
+        const float LHandY = Skel.joints[K4ABT_JOINT_HAND_LEFT].position.xyz.y;
+        const float RHandY = Skel.joints[K4ABT_JOINT_HAND_RIGHT].position.xyz.y;
+
+        const bool LeftAbove = (HeadY - LHandY) > AboveHeadMarginMM;
+        const bool RightAbove = (HeadY - RHandY) > AboveHeadMarginMM;
+
+        FBodyRaiseState& S = BodyStates.FindOrAdd(BodyId);
+        const bool LeftRising = (!S.bLeftAbove && LeftAbove);
+        const bool RightRising = (!S.bRightAbove && RightAbove);
+
+        // Optionally require the above condition to hold briefly
+        // We can keep a tiny “debounce” by only accepting when it stays above across frames,
+        // but a simple rising-edge + small BlendIn on montages is usually enough.
+        if (LeftRising || RightRising)
+        {
+            S.LastRaiseTime = Now;
+        }
+
+        S.bLeftAbove = LeftAbove;
+        S.bRightAbove = RightAbove;
+        S.LastSeenTime = Now;
+
+        // Commit selection on rising edge (or if still held after RaiseHoldSeconds)
+        const bool JustRaised = (LeftRising || RightRising);
+        const bool HeldRaise = (LeftAbove || RightAbove) && (Now - S.LastRaiseTime >= RaiseHoldSeconds);
+
+        if (JustRaised || HeldRaise)
+        {
+            ActiveBodyId = BodyId; // “last raise wins”
+        }
+    }
+
+    // If our active body disappeared, drop it after a short sticky time, then fallback
+    if (ActiveBodyId != -1)
+    {
+        if (FBodyRaiseState* SActive = BodyStates.Find(ActiveBodyId))
+        {
+            if ((Now - SActive->LastSeenTime) > ActiveStickySeconds)
+            {
+                ActiveBodyId = -1;
+            }
+        }
+        else
+        {
+            ActiveBodyId = -1;
+        }
+    }
+
+    // Fallback to closest if none active or nobody in view
+    if (ActiveBodyId == -1)
+    {
+        findClosestTrackedBody();
+        ActiveBodyId = TrackedBodyId;
+    }
+
+    // Optional: prune stale entries
+    for (auto It = BodyStates.CreateIterator(); It; ++It)
+    {
+        if ((Now - It->Value.LastSeenTime) > 5.f)
+        {
+            It.RemoveCurrent();
+        }
+    }
 }
 
 void UAzureKinectBodyTrackingComponent::cry()
@@ -351,11 +458,125 @@ void UAzureKinectBodyTrackingComponent::findClosestTrackedBody()
     }
 }
 
-void UAzureKinectBodyTrackingComponent::setAzureCameraTransform(const FTransform& NewTransform)
+static FORCEINLINE FVector AzureToUE_SensorLocal_cm(const FVector& p_m)
 {
-    AzureCameraTransform = NewTransform;
-    UE_LOG(LogTemp, Log, TEXT("AzureKinect: transform set to Location=%s Rotation=%s"),
-        *AzureCameraTransform.GetLocation().ToString(),
-        *AzureCameraTransform.GetRotation().Rotator().ToString()
-    );
+    //return FVector(p_m.Z * 100.f,  // +X forward
+    //    p_m.X * 100.f,  // +Y right
+    //    p_m.Y * 100.f); // +Z up
+    return FVector(-p_m.X * 100.f,
+        -p_m.Y * 100.f,
+        p_m.Z * 100.f);
+}
+
+FVector UAzureKinectBodyTrackingComponent::ComputeLookTargetFromKinectHead(
+    const FVector& HeadPosMeters_Kinect,
+    const FTransform& KinectToWorld,
+    const FTransform& CameraWorld,
+    const FVector& AvatarHeadWorld,
+    float AimDistance) const
+{
+    const FVector HeadWorld = KinectToWorld.TransformPosition(AzureToUE_SensorLocal_cm(HeadPosMeters_Kinect));
+    const FVector HeadInCam = CameraWorld.InverseTransformPosition(HeadWorld);
+
+    FVector DirCam = HeadInCam.GetSafeNormal();
+    // DirCam.Y *= -1; // mirror feel, optional
+
+    const FVector WorldPointOnRay = CameraWorld.GetLocation() +
+        CameraWorld.TransformVectorNoScale(DirCam) * 1000.f;
+    const FVector AimDirWorld = (WorldPointOnRay - AvatarHeadWorld).GetSafeNormal();
+    return AvatarHeadWorld + AimDirWorld * AimDistance;
+}
+
+int32 UAzureKinectBodyTrackingComponent::AmountOfSkeletonsTracked() const
+{
+    if (FrameData)
+        return k4abt_frame_get_num_bodies(FrameData);
+    else
+        return -1;
+}
+
+bool UAzureKinectBodyTrackingComponent::GetSkeletonByBodyId(int32 BodyId, k4abt_skeleton_t& OutSkel) const
+{
+    if (!FrameData || BodyId < 0) return false;
+
+    const uint32 NumBodies = k4abt_frame_get_num_bodies(FrameData);
+    for (uint32 i = 0; i < NumBodies; ++i)
+    {
+        uint32 ThisId = k4abt_frame_get_body_id(FrameData, i);
+        if (ThisId == K4ABT_INVALID_BODY_ID) continue;
+        if (static_cast<int32>(ThisId) != BodyId) continue;
+
+        if (k4abt_frame_get_body_skeleton(FrameData, i, &OutSkel) == K4A_RESULT_SUCCEEDED)
+        {
+            return true;
+        }
+        break;
+    }
+    return false;
+}
+
+bool UAzureKinectBodyTrackingComponent::GetActiveBodySkeleton(TArray<FBodyJointData>& OutJoints) const
+{
+    if (SelectionMode == EActiveSelectionMode::Closest)
+    {
+        // Preserve current behavior for convenience (use closest)
+        return getBodySkeleton(OutJoints);
+    }
+
+    k4abt_skeleton_t Skel;
+    if (!GetSkeletonByBodyId(ActiveBodyId, Skel)) return false;
+
+    OutJoints.Reset();
+    OutJoints.Reserve(K4ABT_JOINT_COUNT);
+
+    // Convert to your existing FBodyJointData layout & remap (reuse your getBodySkeleton code)
+    for (int JointIndex = 0; JointIndex < K4ABT_JOINT_COUNT; ++JointIndex)
+    {
+        const auto& Src = Skel.joints[JointIndex];
+
+        FBodyJointData Data;
+        Data.JointId = JointIndex;
+
+        EAzureKinectJoint JointEnum = static_cast<EAzureKinectJoint>(Data.JointId);
+        const UEnum* UEEnum = StaticEnum<EAzureKinectJoint>();
+        Data.JointName = UEEnum->GetDisplayNameTextByValue((int64)JointEnum).ToString();
+
+        // mm -> cm (same as your getBodySkeleton)
+        FVector LocalCm(
+            Src.position.xyz.x * 0.1f,
+            Src.position.xyz.y * 0.1f,
+            Src.position.xyz.z * 0.1f);
+
+        // your remap (note: you currently have Y not negated — keep consistent with your pipeline)
+        FVector LocalUnrealCm(
+            LocalCm.Z,
+            LocalCm.X,
+            LocalCm.Y
+        );
+
+        FVector WorldCm = AzureCameraTransform.TransformPosition(LocalUnrealCm);
+        Data.Position = WorldCm;
+
+        FQuat Qkinect(
+            Src.orientation.wxyz.x,
+            Src.orientation.wxyz.y,
+            Src.orientation.wxyz.z,
+            Src.orientation.wxyz.w
+        );
+        static const FMatrix RemapMatrix = FMatrix(
+            FPlane(0, 0, 1, 0),
+            FPlane(1, 0, 0, 0),
+            FPlane(0, -1, 0, 0),
+            FPlane(0, 0, 0, 1)
+        );
+        const FQuat RemapQuat(RemapMatrix);
+        const FQuat RemapQuatInv = RemapQuat.Inverse();
+        FQuat Qlocal = RemapQuat * Qkinect * RemapQuatInv;
+        FQuat Qworld = AzureCameraTransform.GetRotation() * Qlocal;
+        Data.Orientation = Qworld;
+
+        OutJoints.Add(Data);
+    }
+
+    return true;
 }
